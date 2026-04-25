@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auxilio 24/7 - Sistema de Grúas</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        :root {
+            --primary: #2563eb;
+            --dark-bg: #111827;
+            --dark-card: #1f2937;
+            --light-bg: #f8fafc;
+            --success: #10b981;
+            --danger: #ef4444;
+        }
+
+        body { font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; background: var(--light-bg); transition: 0.3s; }
+        .app-container { max-width: 500px; margin: auto; min-height: 100vh; display: flex; flex-direction: column; }
+        
+        /* Navbar */
+        .navbar { background: white; padding: 15px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .role-badge { padding: 5px 12px; border-radius: 20px; font-size: 0.8em; font-weight: bold; cursor: pointer; }
+        
+        /* Map Area */
+        #map { height: 300px; width: 100%; z-index: 1; }
+
+        /* Content Area */
+        .content { padding: 20px; flex-grow: 1; }
+        .card { background: white; border-radius: 15px; padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        
+        /* Form elements */
+        label { display: block; font-size: 0.85em; font-weight: bold; color: #64748b; margin-top: 15px; }
+        select, input { width: 100%; padding: 12px; margin-top: 5px; border: 1px solid #e2e8f0; border-radius: 10px; box-sizing: border-box; }
+        
+        /* Buttons */
+        .btn { width: 100%; padding: 15px; border: none; border-radius: 12px; font-weight: bold; font-size: 1em; cursor: pointer; margin-top: 15px; transition: 0.2s; }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-success { background: var(--success); color: white; }
+        
+        /* Status Display */
+        .status-box { text-align: center; padding: 15px; border-radius: 12px; margin-bottom: 20px; font-weight: bold; }
+        .searching { background: #dbeafe; color: #1e40af; border: 1px dashed #1e40af; }
+
+        /* DARK MODE (Chofer) */
+        body.dark-mode { background: var(--dark-bg); color: white; }
+        body.dark-mode .navbar { background: var(--dark-card); color: white; border: none; }
+        body.dark-mode .card { background: var(--dark-card); color: white; border: 1px solid #374151; }
+        body.dark-mode input, body.dark-mode select { background: #374151; color: white; border-color: #4b5563; }
+
+        .hidden { display: none; }
+    </style>
+</head>
+<body id="mainBody">
+
+    <nav class="navbar">
+        <strong>AUXILIO 24/7</strong>
+        <span id="roleLabel" class="role-badge" style="background: #e2e8f0;" onclick="toggleRole()">MODO CLIENTE</span>
+    </nav>
+
+    <div class="app-container">
+        <div id="map"></div>
+
+        <div id="clientView" class="content">
+            <div class="card" id="step1">
+                <h3>Solicitar Auxilio</h3>
+                <div style="background: #f1f5f9; padding: 10px; border-radius: 8px; font-size: 0.9em; margin-bottom: 10px; color: #334155;">
+                    🚗 <strong>Tu Vehículo:</strong> Toyota Corolla (ABC-123)
+                </div>
+                
+                <label>Porte del Vehículo</label>
+                <select id="porte" onchange="updatePrice()">
+                    <option value="chico">Vehículo Chico ($20k + $2k/km)</option>
+                    <option value="grande">Mayor Porte ($30k + $3k/km)</option>
+                </select>
+
+                <label>¿Ruedas bloqueadas?</label>
+                <select id="bloqueo" onchange="updatePrice()">
+                    <option value="0">No (Rueda bien)</option>
+                    <option value="5000">Sí (Bloqueadas +$5.000)</option>
+                </select>
+
+                <label>Distancia estimada (KM)</label>
+                <input type="number" id="distanciaInput" value="5" oninput="updatePrice()">
+
+                <div style="margin-top: 20px; text-align: center;">
+                    <span style="color: #64748b;">Total Estimado:</span>
+                    <h2 id="totalDisplay" style="margin: 5px 0; color: var(--primary);">$30.000</h2>
+                </div>
+
+                <button class="btn btn-primary" onclick="requestTow()">PEDIR GRÚA AHORA</button>
+            </div>
+
+            <div id="step2" class="card hidden">
+                <div class="status-box searching">Buscando grúa cercana...</div>
+                <p style="text-align: center;">Por favor, mantente en el lugar. Estamos asignando tu unidad.</p>
+            </div>
+        </div>
+
+        <div id="driverView" class="content hidden">
+            <div class="card">
+                <h3>Panel de Servicios</h3>
+                <div id="noJobs">Esperando nuevos pedidos... 🛰️</div>
+                
+                <div id="jobOffer" class="hidden">
+                    <div style="border: 2px solid var(--primary); padding: 15px; border-radius: 10px; background: rgba(37, 99, 235, 0.1);">
+                        <p><strong>NUEVO PEDIDO:</strong> Juan Pérez</p>
+                        <p>📍 A 2.2 km de distancia</p>
+                        <p>🚗 Toyota Corolla (Porte Chico)</p>
+                        <button class="btn btn-success" onclick="acceptJob()">ACEPTAR SERVICIO</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        let map, marker, role = 'client';
+
+        // Inicializar Mapa
+        function initMap() {
+            map = L.map('map').setView([-34.6037, -58.3816], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+            marker = L.marker([-34.6037, -58.3816], {draggable: true}).addTo(map);
+        }
+
+        function toggleRole() {
+            const body = document.getElementById('mainBody');
+            const cView = document.getElementById('clientView');
+            const dView = document.getElementById('driverView');
+            const label = document.getElementById('roleLabel');
+
+            if(role === 'client') {
+                role = 'driver';
+                body.classList.add('dark-mode');
+                cView.classList.add('hidden');
+                dView.classList.remove('hidden');
+                label.innerText = 'MODO CHOFER';
+                label.style.background = '#1e2937';
+                label.style.color = '#34d399';
+            } else {
+                role = 'client';
+                body.classList.remove('dark-mode');
+                cView.classList.remove('hidden');
+                dView.classList.add('hidden');
+                label.innerText = 'MODO CLIENTE';
+                label.style.background = '#e2e8f0';
+                label.style.color = 'black';
+            }
+        }
+
+        function updatePrice() {
+            const porte = document.getElementById('porte').value;
+            const km = document.getElementById('distanciaInput').value || 0;
+            const bloqueo = parseInt(document.getElementById('bloqueo').value);
+
+            const base = (porte === 'chico') ? 20000 : 30000;
+            const pKm = (porte === 'chico') ? 2000 : 3000;
+
+            const total = base + (km * pKm) + bloqueo;
+            document.getElementById('totalDisplay').innerText = "$" + total.toLocaleString('es-AR');
+        }
+
+        function requestTow() {
+            document.getElementById('step1').classList.add('hidden');
+            document.getElementById('step2').classList.remove('hidden');
+            
+            // Simulación: El pedido le llega al chofer tras 3 segundos
+            setTimeout(() => {
+                document.getElementById('noJobs').classList.add('hidden');
+                document.getElementById('jobOffer').classList.remove('hidden');
+            }, 3000);
+        }
+
+        function acceptJob() {
+            alert("¡Servicio Aceptado! Iniciando navegación GPS...");
+            document.getElementById('jobOffer').innerHTML = "<p>✅ <strong>En curso:</strong> Vas al encuentro de Juan Pérez.</p><progress value='40' max='100' style='width:100%'></progress>";
+        }
+
+        window.onload = initMap;
+    </script>
+</body>
+</html>
